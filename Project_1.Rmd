@@ -1,0 +1,493 @@
+---
+title: "Project 1"
+date: "26.10.2020"
+output:
+  html_document: 
+    toc: true
+    toc_depth: 5
+    toc_float: true
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+### 0. Prerequisites: installation and import of libraries
+The current work requires the following packages (R version: 3.6.3):
+```{r message=FALSE, warning = FALSE}
+require('dplyr')
+require('ggplot2')
+require('corrplot')
+require('reshape2')
+require('ggfortify')
+```
+
+### 1. Data import
+Specify the absolute path to the folder where *.csv files are located as path_to_folder variable. Example:
+```{r message=FALSE, warning = FALSE}
+#path_to_folder <- 'C:/Users/username/Name_of_folder_with_data/' # for Windows users
+path_to_folder <- 
+```
+
+Function merge_data_from_folder reads each file in .csv format located in your folder and creates a dataframe from it, then binds all dataframes into one using function  bind_rows from dplyr package. To use the function, put path_to_folder that you specified earlier instead of x.
+
+```{r message=FALSE, warning = FALSE}
+
+merge_data_from_folder <- function(x){
+  bind_rows(lapply(list.files(x, pattern = '.csv'), 
+                   function(g) read.csv(paste(x, g, sep=''), 
+                                        quote = "\"", 
+                                        colClasses = "character")))
+}
+
+```
+
+Save all data into one dataframe df_total:
+```{r message=FALSE, warning = FALSE}
+df_total <- merge_data_from_folder(path_to_folder)
+```
+
+Check structure of data and types of variables:
+```{r message=FALSE, warning = FALSE}
+str(df_total)
+```
+Data was imported correctly: total number of observations is `r dim(df_total)[1]`.
+
+
+### 2. Data pre-processing and EDA
+#### 1) columns renaming
+```{r message=FALSE, warning = FALSE}
+#take a look at column names:
+colnames(df_total)
+
+# rename the second column
+colnames(df_total)[2] <- 'Sex'
+```
+
+#### 2) examining correctness of data type 
+As can be noticed, column on Sex data should be transformed into factor type. Other columns - into numeric or double type:
+```{r message=FALSE, warning = FALSE}
+str(df_total)
+```
+
+
+Before converting column values into more appropriate data type, first we should check if there any specific non-numeric values in data frame that could not be converted into numeric type:
+```{r message=FALSE, warning = FALSE}
+df_total %>% 
+  sapply(.,  function(x) suppressWarnings(which(is.na(as.double(x))))) %>% 
+  Filter(length, .)
+```
+
+Let's save result of the previous command as a list of indices of "strange" values:
+```{r message=FALSE, warning = FALSE}
+lst_idx_nonnumeric <- df_total %>% 
+  sapply(.,  function(x) suppressWarnings(which(is.na(as.double(x))))) %>% 
+  Filter(length, .)
+```
+
+Take a look at questionable data slice:
+```{r message=FALSE, warning = FALSE}
+df_total %>% 
+  select(names(lst_idx_nonnumeric)) %>% 
+  slice(unlist(lst_idx_nonnumeric, use.names = F))
+```
+
+Manually replace non-numeric values with value that can be converted into numeric or double. Replace missing data with NA:
+```{r message=FALSE, warning = FALSE}
+df_total$Rings[lst_idx_nonnumeric$Rings] <- 9
+df_total$Sex[lst_idx_nonnumeric$Sex[-1]] <- c(3, 1, 1)
+df_total$Length[lst_idx_nonnumeric$Length[length(lst_idx_nonnumeric$Length)]] <- NA
+```
+
+#### 3) dealing with missing values (NAs)
+
+Is there any missing data, e.g. NA ?
+```{r message=FALSE, warning = FALSE}
+any(!complete.cases(df_total))
+```
+
+Report how many NAs are in each column:
+```{r message=FALSE, warning = FALSE}
+sapply(df_total, function(x) sum(is.na(x)))
+```
+
+If we exclude rows containig NAs, data would be shrinked by `r (dim(df_total) - dim(na.omit(df_total)))[1]` rows:
+```{r message=FALSE, warning = FALSE}
+(dim(df_total) - dim(na.omit(df_total)))[1]
+```
+
+It could be better to remove all rows with missing values in them instead of replacing NAs with mean or mode. Size of dataframe is large enough allowing us to omit rows containing NAs without loosing to much data:
+```{r message=FALSE, warning = FALSE}
+df_wo_NA <- na.omit(df_total)
+str(df_wo_NA)
+```
+
+#### 4) converting column values into more appropriate data type
+```{r message=FALSE, warning = FALSE}
+df_wo_NA <- df_wo_NA %>% 
+  mutate(Sex = factor(Sex, labels = c("Male", "Female", "Juvenile"))) %>% 
+  mutate_if(is.character, as.double)
+
+str(df_wo_NA)
+```
+
+#### 5) detecting outliers and visualizing data
+Let's take a look at data using basic graphic visualization:
+```{r message=FALSE, warning = FALSE}
+plot(df_wo_NA, main = "Scatterplot matrix")
+```
+
+At first sight, there could be outliers in Height data. Moreover, it seems that weight metrics are correlated in non-linear manner with length parameter as well as with diameter and height. Diameter, length and height could be also correlated, however in linear manner. Rings characteristic might be less correlated with any other variable.  
+
+Data visualization using boxplot might help us to detect outliers. First, we get our data in a specific format by melting it: 
+```{r message=FALSE, warning = FALSE}
+df_wo_NA_melt <- melt(df_wo_NA, id.var = "Sex")
+head(df_wo_NA_melt)
+```
+
+After that, plot multiple boxplot in one graph: 
+```{r message=FALSE, warning = FALSE}
+ggplot(data = df_wo_NA_melt, aes(x=variable, y=value)) + 
+  geom_boxplot(aes(fill=Sex)) +
+  facet_wrap( ~ variable, scales="free") + 
+  xlab("Measured characteristic of mollusc") +
+  ylab("Units of measurement") + 
+  labs(title = "Measured characteristics of male, female and juvenile molluscs")+
+  theme_bw()
+```
+
+
+Based on boxplot observations, it seems reasonable to exclude at least 2 top values in the Height column as most critical outliers. Remove dataframe rows containing 2 outliers of Height value:
+```{r message=FALSE, warning = FALSE}
+df_wo_NA_outliers <- df_wo_NA %>%  
+  filter(!(Height %in% unlist(df_wo_NA  %>%  
+         arrange(-Height) %>% 
+         slice(c(1:2)) %>% 
+         select(Height), use.names = F))) 
+```
+
+#### 6) searching for associations between variables
+Calculate correlation coefficients for all numeric variables:
+```{r message=FALSE, warning = FALSE}
+cor_data <- df_wo_NA_outliers %>% 
+  select(-Sex) %>% 
+  cor()
+```
+
+Construct plot visualizing correlation matrix:
+```{r message=FALSE, warning = FALSE}
+col_pal <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+corrplot(cor_data, 
+         col = col_pal(200),
+         type="lower", 
+         order="hclust", 
+         title = "Correlation Matrix",
+         addCoef.col = "black", 
+         tl.col="black", tl.srt=45,
+         mar=c(0,0,1,0))
+```
+
+There is a high positive association between different weight characteristics and geometric parameters (Length, Diameters, Height) according to calculated correlation coefficients. Parameter Rings is the less correlating with all other ones.
+
+### 3. Calculate mean value and standard deviation of Length variable for molluscs of different Sex 
+```{r message=FALSE, warning = FALSE}
+df_wo_NA_outliers %>% 
+  group_by(Sex) %>% 
+  summarise(Mean_Length = mean(Length),
+            Sd_Length=sd(Length))
+```
+
+
+### 4. Calculate proportion of those molluscs which Height is not more than 0.165 
+```{r message=FALSE, warning = FALSE}
+round(unlist(df_wo_NA_outliers %>% 
+               filter(Height <= 0.165) %>%
+         count(), use.names = F)/dim(df_wo_NA_outliers)[1] * 100,2)
+```
+
+Almost 75 % of molluscs in our data were of height which is less than 0.165. 
+According to basic statistics summary: 
+```{r message=FALSE, warning = FALSE}
+summary(df_wo_NA_outliers$Height)
+```
+
+Height value of 0.165 is the third quantile.
+
+### 5. Find the Length value below which 92% of observations falls. 
+```{r message=FALSE, warning = FALSE}
+quantile(df_wo_NA_outliers$Length, c(0.92))
+```
+
+
+### 6. Create a new column named Lenght_z_scores with standardized Length
+```{r message=FALSE, warning = FALSE}
+df_wo_NA_outliers <- df_wo_NA_outliers %>% 
+  mutate(Lenght_z_scores = (Length - mean(Length))/sd(Length))
+head(df_wo_NA_outliers)
+```
+
+### 7. Compare diameters of molluscs with 5 and 15 rings
+#### 1) constructing subset with Diameter and Rings values only
+Construct summarizing table for Diameter data, grouping by Rings value:
+```{r message=FALSE, warning = FALSE}
+df_wo_NA_outliers %>% 
+  select(Diameter,Rings) %>% 
+  group_by(Rings) %>%
+  summarise(mean_Diameter = round(mean(Diameter),2),
+            sd_Diameter = round(sd(Diameter),2)) %>% 
+              filter(Rings == 5 | Rings == 15) 
+```
+
+According to summarizing table (see above), we can suggest that there could be significant difference between Diameters of molluscs with 5 and 15 Rings. Create a subset of initial dataframe for downstream analysis:
+```{r message=FALSE, warning = FALSE}
+df_Diameters_Rings5_15 <- df_wo_NA_outliers %>%
+  select(Diameter,Rings) %>% 
+  filter(Rings == 5 | Rings == 15) 
+head(df_Diameters_Rings5_15)
+```
+
+Two samples are independent. We should compare mean diameters in case of 5 and 15 rings. But first, let's check normality of sample distribution and difference in variances between samples. 
+
+#### 2) Shapiro - Wilk normality test
+According to Shapiro - Wilk normality test, at 5 % significance level both samples are normally distributed:
+p-values for diameters distribution of molluscs with 5 and 15 rings (`r round((df_Diameters_Rings5_15 %>% filter(Rings == 5) %>% with(., shapiro.test(x = Diameter)))$p.value,3)` and `r round((df_Diameters_Rings5_15 %>% filter(Rings == 15) %>% with(., shapiro.test(x = Diameter)))$p.value,3)`, respectively) are higher than significance level 0.05 implying that null hupothesis (data are normally distributed) should not be rejected.  
+
+```{r message=FALSE, warning = FALSE}
+# Shapiro-Wilk normality test for Diameters distribution, Rings = 5
+df_Diameters_Rings5_15 %>% 
+  filter(Rings == 5) %>% 
+  with(., shapiro.test(x = Diameter))
+```
+```{r message=FALSE, warning = FALSE}
+# Shapiro-Wilk normality test for Diameters distribution, Rings = 15
+df_Diameters_Rings5_15 %>% 
+    filter(Rings == 15) %>% 
+    with(., shapiro.test(x = Diameter))
+```
+
+#### 3) F - test for homogeneity in variances
+According to  F - test for homogeneity in variances, at 5 % significance level there is a difference between variance of 2 samples (`r round(var.test(df_Diameters_Rings5_15$Diameter[df_Diameters_Rings5_15$Rings==5],df_Diameters_Rings5_15$Diameter[df_Diameters_Rings5_15$Rings==15])$p.value,3)` > 0.05, F-statistic is `r round(var.test(df_Diameters_Rings5_15$Diameter[df_Diameters_Rings5_15$Rings==5],df_Diameters_Rings5_15$Diameter[df_Diameters_Rings5_15$Rings==15])$statistic,3)`)
+
+```{r message=FALSE, warning = FALSE}
+var.test(df_Diameters_Rings5_15$Diameter[df_Diameters_Rings5_15$Rings==5],
+           df_Diameters_Rings5_15$Diameter[df_Diameters_Rings5_15$Rings==15])
+```
+
+#### 4) Welch's 2 - sample independent t-test
+As variances of 2 samples could not be considered as equal, we apply Welch's 2-sample 2-sided independent t-test:
+```{r message=FALSE, warning = FALSE}
+t.test(df_Diameters_Rings5_15$Diameter[df_Diameters_Rings5_15$Rings==5],
+       df_Diameters_Rings5_15$Diameter[df_Diameters_Rings5_15$Rings==15],
+       alternative = 'two.sided', var.equal = F)
+```
+
+P-value equal to `r format(t.test(df_Diameters_Rings5_15$Diameter[df_Diameters_Rings5_15$Rings==5],df_Diameters_Rings5_15$Diameter[df_Diameters_Rings5_15$Rings==15], alternative = 'two.sided', var.equal = F)$p.value, digits = 2, scientific=TRUE)` < 0.05  (the value of t-statistic is `r round(t.test(df_Diameters_Rings5_15$Diameter[df_Diameters_Rings5_15$Rings==5],df_Diameters_Rings5_15$Diameter[df_Diameters_Rings5_15$Rings==15],alternative = 'two.sided', var.equal = F)$statistic, 3)`).  
+
+Basic statistics on number of rings grouped by Sex value shows that 15 rings and 5 rings are values that are higher and lower than mean value, respectively, and are not outliers (except for 15 rings in juvenile molluscs):      
+```{r message=FALSE, warning = FALSE}
+df_wo_NA_outliers %>% 
+  group_by(Sex) %>% 
+  select( Rings) %>% 
+  summarise(., max_Rings = max(Rings), 
+            mean_Rings = mean(Rings), 
+            min_Rings = min(Rings), 
+            median_Rings = median(Rings),
+            lower_point = quantile(Rings, 0.25, names = F) - 1.5*IQR(Rings),
+            upper_point = quantile(Rings, 0.75, names = F) + 1.5*IQR(Rings))
+```
+
+Thus, we may suhhest that at 5 % significance level molluscs with high and low rings on average differ by their diameters. 
+
+#### 5) graphical illustration
+Difference in mean values of Diameters depending on 2 types of Rings  are shown using boxplots. Diameters of molluscs with 15 rings are significantly higher than diameters of molluscs with 5 rings. 
+```{r message=FALSE, warning = FALSE}
+ggplot(df_Diameters_Rings5_15, 
+       aes(x = factor(Rings),
+           y = Diameter, 
+           fill = factor(Rings)))+
+  geom_boxplot(outlier.shape = NA)+
+  theme_bw() + 
+  xlab(label = "Number of rings") + 
+  ylab(label = "Diameter of mollusc") +
+  labs(fill= "Number \nof rings", title = "Diameter of molluscs with 5 and 15 rings") +
+  theme(text = element_text(size=15), 
+        axis.text = element_text(size=15)) 
+```
+
+Assuming that number of rings might point towards age of mollusc, we may suggest that the older mollusc is, the larger it gets in diameter. 
+
+
+### 8. Association between Diameter and Whole_weight
+#### 1) visualizing the association in scatterplot 
+First, let's check if there is a linear or nonlinear association between two variables. 
+Scatterplot shows that 2 variables could be related but an association between them is not linear:
+```{r message=FALSE, warning = FALSE}
+ggplot(df_wo_NA_outliers, 
+       aes(Diameter, Whole_weight)) +
+  geom_point()+
+  geom_smooth(method = "lm") +
+  theme_bw() +
+  labs(x = "Diameter of the shell",
+       y = "Whole weight of mollusc",
+       title = 'Whole weight of mollusc vs Diameter of the shell')+
+  theme(text = element_text(size=15), 
+        axis.text = element_text(size=15)) 
+```
+
+Generalized linear model better describes relationship between Diameter and Whole_weight:
+```{r message=FALSE, warning = FALSE}
+ggplot(df_wo_NA_outliers, 
+       aes(Diameter, Whole_weight)) +
+  geom_point()+
+  geom_smooth(method = "gam") +
+  theme_bw() +
+  labs(x = "Diameter of the shell",
+       y = "Whole weight of mollusc",
+       title = 'Whole weight of mollusc vs Diameter of the shell') +
+  theme(text = element_text(size=15), 
+        axis.text = element_text(size=15)) 
+```
+
+#### 2) Shapiro - Wilk normality test
+According to Shapiro - Wilk normality test, at 5 % significance level both samples are not normally distributed: p-values for either Diameter or Whole_weight distributions  (`r format((df_wo_NA_outliers %>% with(., shapiro.test(x = Diameter)))$p.value, digits = 2, scientific=TRUE)` and `r format((df_wo_NA_outliers %>% with(., shapiro.test(x = Whole_weight)))$p.value, digits = 2, scientific=TRUE)`, respectively) are less than significance level 0.05 implying that null hupothesis (data is normally distributed) should be rejected.  
+
+```{r message=FALSE, warning = FALSE}
+# Shapiro-Wilk normality test for Diameters
+df_wo_NA_outliers %>% 
+  with(., shapiro.test(x = Diameter))
+```
+
+```{r message=FALSE, warning = FALSE}
+# Shapiro-Wilk normality test for Whole_weight
+df_wo_NA_outliers %>% 
+  with(., shapiro.test(x = Whole_weight))
+```
+
+#### 3) calculating correlation coefficient
+As correlation is likely to be noninear and variables are not normally distributed according to statictical test, we would calculate Spearman's rank correlation coefficient:
+
+```{r message=FALSE, warning = FALSE}
+cor.test(df_wo_NA_outliers$Diameter, df_wo_NA_outliers$Whole_weight, method = "spearman", exact = F)
+```
+
+The Spearman's rank correlation coefficient between Diameter and Whole_weight is `r round(cor.test(df_wo_NA_outliers$Diameter, df_wo_NA_outliers$Whole_weight, method = "spearman", exact = F)$estimate, 3)` and the p-value is `r cor.test(df_wo_NA_outliers$Diameter, df_wo_NA_outliers$Whole_weight, method = "spearman", exact = F)$p.value` < 0.05. It indicates that at 5 % significance level we can suggest that there is a high association between Diameter and Whole_weight and Diameter increases with Whole_weight. 
+
+
+### 9. Additional anlysis
+#### 9.1. Mann-Whitney test: comparing molluscs of three sex by weight and geometric characteristics
+Using statisctical test, check whether male, female and juvenile molluscs indeed differ by number of rings and other characteristics.
+As our data contains some outliers and different metrics might not follow normal distribution,  let's perform unpaired two-sample Wilcoxon tests (Mann-Whitney) to compare male, female and juvenile molluscs. First, create a function that calculates Wilcoxon tests for all possible pairs of samples. 
+The function wilcox_test_pairwise calculates Wilcoxon test statisctis for each numeric chracteristic in vector vector_v_response for all possible pairs of groups. Grouping variable must be a factor and specified in the function as v_grouping; vector_v_response specifies names of characteristic to be compared; df_in is dataframe that contains factor column - grouping variable and numeric columns - characteristics for comparison between groups. The function returns dataframe with the folowing columns: Level_1, Level_2 (groups that were compared), Measurement, W_statistic (unpaired 2-sided 2-sample Wilcoxon test statistic) and p_value. 
+```{r message=FALSE, warning = FALSE}
+wilcox_test_pairwise <- function(df_in, v_grouping, vector_v_response){
+  df_out <- data.frame(Level_1 = character(),
+                       Level_2 = character(),
+                       Measurement = character(), 
+                       Mann_Whitney_Statistic = double(),
+                       p_value = double())
+  level_vec = levels(df_in[,v_grouping])
+  for (v_response in vector_v_response){
+    for (i in 1:(length(level_vec)-1)){
+      for (j in (i+1):length(level_vec)){
+        level_1 = level_vec[i]
+        level_2 = level_vec[j]
+        if (level_1!=level_2){
+          p_val <- wilcox.test(df_in[v_response][df_in[v_grouping]== level_1],
+                               df_in[v_response][df_in[v_grouping]== level_2])$p.value
+          W_statistic <- wilcox.test(df_in[v_response][df_in[v_grouping]== level_1],
+                                     df_in[v_response][df_in[v_grouping]== level_2])$statistic
+          df_out <-  rbind(df_out, data.frame(Level_1 = as.character(level_1),
+                                              Level_2 = as.character(level_2),
+                                              Measurement = as.character(v_response), 
+                                              Mann_Whitney_Statistic = W_statistic,
+                                              p_value = p_val))
+        }
+      }
+    }
+    df_out <- data.frame(lapply(df_out, function(x) if (is.factor(x)) as.character(x) else {x}), 
+                         stringsAsFactors=FALSE)
+  }
+  return(df_out[1:(nrow(df_out)),])
+}
+```
+
+According to result of Wilcoxon test, on average at 5 % significance level,  male, female and juvenile molluscs differ by rings, weight and geometric parameters (p - vlues are < 0.05):
+```{r message=FALSE, warning = FALSE}
+wilcox_test_pairwise(df_in = df_wo_NA_outliers, v_grouping = 'Sex', vector_v_response =  
+                       df_wo_NA_outliers %>% select(-2,-10) %>% colnames())
+```
+
+
+#### 9.2. PCA analysis
+As weight and geometric characteristics are highly correlated with each other (see 2.6), we might go from intitial variable to principal components that are not correlated, choose 2 principal components (PC) which explain the most variance of data (keep the most information) and construct scatterplot to better understand the structure of our data. Perform principal components analysis of numeric data (weight and geometric characteristics) using prcomp function:
+```{r message=FALSE, warning = FALSE}
+pca_data <- prcomp(df_wo_NA_outliers %>% 
+                     select(-Sex, -Rings, -Lenght_z_scores), 
+                   scale = TRUE)
+```
+
+
+From the the summary, we can undersand that PC1 explains 92.4% of variance and PC2 explains 3% so on. In other words, about 92 % of the information (variances) contained in the data are retained by the first PC:
+```{r message=FALSE, warning = FALSE}
+summary(pca_data)
+```
+
+Let's take a look at coefficients to the linear combinations of the original variables for the first and second PC as they explains the most variance:
+```{r message=FALSE, warning = FALSE}
+pca_data$rotation[,1:2]
+```
+
+The first vector places approximately equal weight on all variables, indicating that all size and weight related variables are correlated with each other.
+
+Select the first two componets and construct biplot:
+```{r message=FALSE, warning = FALSE}
+autoplot(pca_data,
+         data = df_wo_NA_outliers, 
+         colour = 'Sex') +
+  labs(title = "Biplot for principal component analysis: molluscs of three different sex") +
+  theme(text = element_text(size=15), 
+        axis.text = element_text(size=15)) +
+  theme_bw()
+```
+
+It seems that there is a slight division into juvenile and non-juvenile molluscs, however grouping into male and female is not distinct. The intersection area of groups could be distinguished.
+```{r message=FALSE, warning = FALSE}
+autoplot(pca_data,
+         data = df_wo_NA_outliers, 
+         frame = TRUE, 
+         frame.colour = 'Sex') +
+  labs(title = "Biplot for principal component analysis: molluscs of three different sex") +
+  theme(text = element_text(size=15), 
+        axis.text = element_text(size=15)) +
+  theme_bw()
+```
+
+Among part of juvenile and non-juvenile molluscs, weight and geometric characteristics are similar. Probably, the size of mollusc is effected by some other factors in addition to the age, for example: habitat, nutrient supply, season,filtration activity,  which also should be included in the analysis. 
+
+Interesting that data grouping into  number of rings (5 and 15) resembles grouping by age category (juvenile and non-juvenile. It corresponds to the suggestion that number of rings might be an age identificator of mollusc.  
+```{r message=FALSE, warning = FALSE}
+autoplot(prcomp(df_wo_NA_outliers %>% 
+                  filter(Rings == 5| Rings == 15 ) %>% 
+                  select(-Sex, -Rings, -Lenght_z_scores),
+                scale = TRUE),
+         data = df_wo_NA_outliers %>% 
+           filter(Rings == 5| Rings == 15 ) %>% 
+           mutate(Rings = as.factor(Rings)),
+         colour = 'Rings') +
+  labs(title = "Biplot for principal component analysis:
+molluscs with high (15) and low (5) number of rings") +
+  theme(text = element_text(size=15), 
+        axis.text = element_text(size=15)) +
+  theme_bw()
+  
+```
+
+
+###  Conclusions
+1) At 5 % significance level, male, female and juvenile molluscs differ by rings, weight and geometric parameters (according to Mann-Whitney test);
+
+2) Number of rings could be considered as age identificator for molluscs; 
+
+3) To set more prominent connection between age and weight/geometric characteristics, more factors should be considered (e.g.: habitat, nutrient supply, season, filtration activity)   
