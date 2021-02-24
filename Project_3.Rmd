@@ -336,20 +336,20 @@ summary(modN)
 After multicollinearity analysis, the model is:
 
 `ERBB4_N` = `r round(coefficients(modN)[[1]],4)` + 
-`r format(coefficients(modN)[[2]],digits=4, scientific=TRUE)` * pCAMKII_N + 
-`r round(coefficients(modN)[[3]],4)` * pELK_N +
-`r round(coefficients(modN)[[4]],4)` * RSK_N + 
-`r round(coefficients(modN)[[5]],4)` * SOD1_N +
-(`r round(coefficients(modN)[[6]],4)`) * DSCR1_N +
-(`r round(coefficients(modN)[[7]],4)`) * pP70S6_N +
-`r round(coefficients(modN)[[8]],4)` * CDK5_N +
-`r round(coefficients(modN)[[9]],4)` * ADARB1_N +
-(`r round(coefficients(modN)[[10]],4)`) * RRP1_N +
-(`r round(coefficients(modN)[[11]],4)`) * GFAP_N  +
-`r round(coefficients(modN)[[12]],4)` * pCASP9_N  +
-`r round(coefficients(modN)[[13]],4)` * SNCA_N +
-`r round(coefficients(modN)[[14]],4)` * SHH_N + 
-`r round(coefficients(modN)[[15]],4)` * H3AcK18_N
+`r format(coefficients(modN)[[2]],digits=4, scientific=TRUE)` * `pCAMKII_N` + 
+`r round(coefficients(modN)[[3]],4)` * `pELK_N` +
+`r round(coefficients(modN)[[4]],4)` * `RSK_N` + 
+`r round(coefficients(modN)[[5]],4)` * `SOD1_N` +
+(`r round(coefficients(modN)[[6]],4)`) * `DSCR1_N` +
+(`r round(coefficients(modN)[[7]],4)`) * `pP70S6_N` +
+`r round(coefficients(modN)[[8]],4)` * `CDK5_N` +
+`r round(coefficients(modN)[[9]],4)` * `ADARB1_N` +
+(`r round(coefficients(modN)[[10]],4)`) * `RRP1_N` +
+(`r round(coefficients(modN)[[11]],4)`) * `GFAP_N`  +
+`r round(coefficients(modN)[[12]],4)` * `pCASP9_N`  +
+`r round(coefficients(modN)[[13]],4)` * `SNCA_N` +
+`r round(coefficients(modN)[[14]],4)` * `SHH_N` + 
+`r round(coefficients(modN)[[15]],4)` * `H3AcK18_N` 
 
 However, according to the results of t-test (df = 537), at 5% significance level, level of `ERBB4_N` production does not depend on expression of `RRP1_N` and `DSCR1_N` and `pELK_N`. 
 
@@ -564,15 +564,15 @@ Pl_predict
 The final model is:
 
 `ERBB4_N` = `r round(coefficients(modN6)[[1]],4)` + 
-`r round(coefficients(modN6)[[2]],4)` *  RSK_N+ 
-`r round(coefficients(modN6)[[3]],4)` * SOD1_N +
-`r round(coefficients(modN6)[[4]],4)` * CDK5_N + 
-`r round(coefficients(modN6)[[5]],4)` *  ADARB1_N +
-(`r round(coefficients(modN6)[[6]],4)`) *  GFAP_N +
-`r round(coefficients(modN6)[[7]],4)` * pCASP9_N +
-`r round(coefficients(modN6)[[8]],4)` * SNCA_N +
-`r round(coefficients(modN6)[[9]],4)` * SHH_N +
-`r round(coefficients(modN6)[[10]],4)` * H3AcK18_N
+`r round(coefficients(modN6)[[2]],4)` *  `RSK_N` + 
+`r round(coefficients(modN6)[[3]],4)` * `SOD1_N` +
+`r round(coefficients(modN6)[[4]],4)` * `CDK5_N` + 
+`r round(coefficients(modN6)[[5]],4)` *  `ADARB1_N` +
+(`r round(coefficients(modN6)[[6]],4)`) *  `GFAP_N` +
+`r round(coefficients(modN6)[[7]],4)` * `pCASP9_N` +
+`r round(coefficients(modN6)[[8]],4)` * `SNCA_N` +
+`r round(coefficients(modN6)[[9]],4)` * `SHH_N` +
+`r round(coefficients(modN6)[[10]],4)` * `H3AcK18_N`
 
 
 
