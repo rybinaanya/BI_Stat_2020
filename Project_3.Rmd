@@ -749,7 +749,7 @@ fig
 ```
 
 
-
+After addition of the third component, PC3, we could much better distiniguish classes (in pairwise manner, for example).  
 
 
 
