@@ -1,0 +1,234 @@
+---
+title: "Survival analysis of the ovarian dataset"
+output:
+  html_document: #default
+    toc: true
+    #theme: united
+    toc_depth: 5
+    toc_float: true
+    #number_section: true
+#editor_options:
+  chunk_output_type: console
+
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### 0. Prerequisites: installation and import of libraries
+The current work requires the following packages (R version: 3.6.3):
+
+```{r message=FALSE, warning = FALSE}
+require(survival)
+require(survminer)
+require(ranger)
+require(ggplot2)
+require(magrittr)
+require(dplyr)
+require(ggfortify)
+require(coin)
+```
+
+
+### 1. Exploratory data analysis
+
+Dataset `ovarian` contains information on survival in a randomised trial where two treatments for ovarian cancer were analyzed. Variables:
+
+`futime`:	 survival or censoring time
+`fustat`:	 censoring status
+`age`:	 in years
+`resid.ds`:	 residual disease present (1=no,2=yes)
+`rx`:	 treatment group
+`ecog.ps`:	 ECOG performance status (1 is better, see reference)
+
+Almsot all variables are supposed to be categorical except for `futime` and `age` which are numerical. 
+
+Take a look at the structure of the data:
+```{r message=FALSE, warning = FALSE}
+df <- ovarian
+str(df)
+```
+
+
+Convert column values into more appropriate data type:
+```{r message=FALSE, warning = FALSE}
+df <- ovarian
+df <- df %>% mutate(ecog.ps = factor(ecog.ps, # ECOG performance status 
+                                     levels = c('1', '2'),
+                                     labels =  c('better', 'worse')), 
+                    
+                    resid.ds = factor(resid.ds, # residual disease present
+                                      levels = c("1", "2"), 
+                                      labels = c("no", "yes")),
+                    rx = factor(rx))
+str(df)
+```
+
+
+No missing values were found:
+```{r message=FALSE, warning = FALSE}
+# number of not complete cases
+sum(!complete.cases(df))
+```
+
+
+We could also try to transform `age` variable into factor, dividing observations in 2 or more groups. First, take a look at the distribution of age values:
+```{r  message=FALSE, warning = FALSE}
+ggplot(df, aes(x=age)) + 
+  geom_histogram(color="darkblue", fill="lightblue", binwidth=1) +
+  
+  # add mean value line
+  #geom_vline(aes(xintercept=mean(age)),  
+   #         color="blue", linetype="dashed", size=1) +
+  scale_x_continuous(breaks = seq(round(min(df$age),2), 
+                                  round(max(df$age),2), 5)) +
+  labs(title = "Distribution of age values in the ovarian data ") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+  
+```
+
+
+Approximately, we could disntiguish 2 groups: 'older'(>=55) and 'younger' (<55) ones:
+```{r message=FALSE, warning = FALSE}
+df <- df %>% mutate(age_factor = factor(ifelse(age >=55, "older", "younger")))
+```
+
+
+
+### 2. Kaplan-Meier survival curves
+
+First, let examine if the type of treatment influenced the survival:
+```{r message=FALSE, warning = FALSE}
+km_trt_fit <- survfit(Surv(futime, fustat) ~ rx, data=df)
+autoplot(km_trt_fit) +
+  labs(title = "Survival curve depending on the treatment", 
+       subtitle = 'Ovarian Cancer Survival Data') +
+  xlab('Time') +
+  ylab('Survival proportion') +
+  theme(axis.text.x = element_text(angle = 90, 
+                                     hjust = 1, 
+                                     size = 7),
+          plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5)) 
+```
+
+We may suggest that the probability to survive is higher in the group with the second tratement than with the first one. 
+
+The effect of age factor in the survival:
+```{r message=FALSE, warning = FALSE}
+km_age_fit <- survfit(Surv(futime, fustat) ~ age_factor, data=df)
+autoplot(km_age_fit) +
+  labs(title = "Survival curve depending on age group", 
+       subtitle = 'Ovarian Cancer Survival Data') +
+  xlab('Time') +
+  ylab('Survival proportion') +
+  theme(axis.text.x = element_text(angle = 90, 
+                                     hjust = 1, 
+                                     size = 7),
+          plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5)) 
+```
+
+
+Patients of age less than 55 y.o. have more chances to survive ovarian cancer.
+
+### 3. Log-rank test: Testing for differences in survival between groups
+
+
+At 5 % signidicance level, there is a difference in survival between age groups:
+```{r message=FALSE, warning = FALSE}
+survdiff(Surv(futime, fustat) ~ age_factor, data=df)
+```
+
+p = 0.03 < 0.05 indicates that comparing survival curves are different in both groups. 
+
+```{r message=FALSE, warning = FALSE}
+logrank_test(Surv(futime, fustat) ~ age_factor, data=df)
+```
+
+
+At 5 % signidicance level, there no difference in survival between treatment groups:
+```{r message=FALSE, warning = FALSE}
+survdiff(Surv(futime, fustat) ~ rx, data=df)
+```
+
+
+```{r message=FALSE, warning = FALSE}
+logrank_test(Surv(futime, fustat) ~ rx, data=df)
+```
+
+
+As for presence of residual disease, no significant difference was found (5 % significance level):
+```{r message=FALSE, warning = FALSE}
+survdiff(Surv(futime, fustat) ~ resid.ds, data=df)
+```
+
+
+```{r message=FALSE, warning = FALSE}
+logrank_test(Surv(futime, fustat) ~ resid.ds, data=df)
+```
+
+For different ECOG performance status, survival is similar:
+```{r message=FALSE, warning = FALSE}
+logrank_test(Surv(futime, fustat) ~ ecog.ps, data=df)
+```
+
+
+### 4.  Cox proportional hazards regression analysis
+
+
+To evaluate simultaneously the effect of several factors on survival, build Cox proportional hazards regression model using the `coxph` function and visualize the result:
+```{r message=FALSE, warning = FALSE}
+cox <- coxph(Surv(futime, fustat) ~ rx + resid.ds + age_factor + ecog.ps, 
+                   data = df)
+summary(cox)
+```
+
+
+According to the Wald statistics, treatment group and age group have statistically significant coefficients (at 5 % significance level). Other covariates `ecog.ps` and `resid.ds` failed to have coefficients significantly different from 0. 
+
+Regression coefficients showed that the treatment 2 has lower risk of death than treatment 1 (regression coefficient is `r round(cox$coefficients[[1]], 2)`) and young age group might also have better survival than older age group (coefficient is `r round(cox$coefficients[[3]], 2)`).
+
+Hazard ratios (exponentiated coefficients (exp(coef)) indicated that treatment 2 reduces the hazard by a factor of `r round(exp(unname(cox$coefficients)[1]), 3)` if other covariates are constant. Being of young age reduces the hazard by `r round(exp(unname(cox$coefficients)[3]), 3)` assuming other covariates are fixed. Treatment 2 and young age are associated with good survival. 
+
+At 5 % significance level,  only two overal tests gave significant results: Likelihood ratio test (p=0.02) and Score (logrank) test (p=0.03), but not Wald test (p=0.06). Model might be marginally significant. 
+
+Visualize the estimated survival distribution at the mean values of covariates:
+```{r message=FALSE, warning = FALSE}
+cox_fit <- survfit(cox)
+autoplot(cox_fit)
+```
+
+
+Now let's construct Aalen’s additive regression model for censored data
+```{r message=FALSE, warning = FALSE}
+aa_fit <- aareg(Surv(futime, fustat) ~ rx + resid.ds + age_factor + ecog.ps, 
+                   data = df)
+
+autoplot(aa_fit) +
+  labs(title = "Survival curves", 
+       subtitle = 'Ovarian Cancer Survival Data') +
+  xlab('Time') +
+  ylab('Survival proportion') +
+  theme(axis.text.x = element_text(angle = 90, 
+                                     hjust = 1, 
+                                     size = 7),
+          plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5)) 
+```
+
+The plots show how the effects of the covariates change over time. Presence of residial disease could increase risk of death over time while younger age and treatment 2 could increase probability of survival. ECOG performance status seems to have the smallest effect on survival. 
+We could suggest that age factor is one of the most contributive to survival.   
+
+### 5. Hazard Ratio
+
+```{r message=FALSE, warning = FALSE}
+ggforest(cox, data = df)
+```
+
+Being of younger age and treated with the treatment 2 could  signficiantly reduce the risk of death/increase the probability of survival: at any given time, 0.17 times as many young patients could die as older ones and 0.28 times as many treated with the treatment 2 could pass away as those treated with the treatment 1.
+Contribution of other factors to survival are not significant at 5 % significance level. 
+
