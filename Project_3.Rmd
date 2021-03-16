@@ -1,0 +1,907 @@
+---
+title: "Project 3"
+date: "24.02.2021"
+author: "Anna Rybina"
+output:
+  html_document: #default
+    toc: true
+    #theme: united
+    toc_depth: 5
+    toc_float: true
+    #number_section: true
+#editor_options:
+  chunk_output_type: console
+
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+In this project, we used mice protein expression dataset (https://archive.ics.uci.edu/ml/datasets/Mice+Protein+Expression#) from the study 10.1371/journal.pone.0119491
+
+### 0. Prerequisites: installation and import of libraries
+The current work requires the following packages (R version: 3.6.3):
+```{r message=FALSE, warning = FALSE}
+require('vegan')
+require('readxl')
+require('car')
+require('ggplot2')
+require("dplyr")
+require("magrittr")
+require("car")
+#require('rgl')
+require('multcomp')
+require('plotly')
+
+if (!requireNamespace("BiocManager"))
+    install.packages("BiocManager")
+
+if (!requireNamespace("DESeq2"))
+    BiocManager::install("DESeq2")
+
+require("DESeq2")
+```
+
+
+### 1. Data investigation
+
+Save data as dataframe:
+```{r message=FALSE, warning = FALSE}
+df <- as.data.frame(read_excel("C:/Users/arybina/Desktop/IB_R/Data_Cortex_Nuclear.xls"))
+```
+
+Check the structure of data and types of variables:
+```{r message=FALSE, warning = FALSE}
+str(df)
+```
+
+Data was imported correctly: total number of measurements is `r dim(df)[1]`. 
+
+Calculate total number of mice:
+
+```{r message=FALSE, warning = FALSE}
+length(unique(sub("_.*", "", df$MouseID)))
+```
+
+We may disnguish `r length(unique(df$class))` class of mice in the experiment:
+```{r message=FALSE, warning = FALSE}
+table(df$class)
+```
+
+
+They are combined out of several groups of mice. As for each protein 15 measurements were performed, we could caclculate ratio of number of mice for each group:
+```{r message=FALSE, warning = FALSE}
+# Group genotype
+df %>%  group_by(Genotype) %>% summarize("Number of mice" = n()/15)
+```
+
+
+
+```{r message=FALSE, warning = FALSE}
+# Group behavior
+df %>%  group_by(Behavior) %>% summarize("Number of mice" = n()/15)
+```
+
+
+```{r message=FALSE, warning = FALSE}
+# Group treatment
+df %>%  group_by(Treatment) %>% summarize("Number of mice" = n()/15)
+```
+
+Seems that these grous are not strictly balanced.
+
+
+Now let estimate number of not complete cases:
+```{r message=FALSE, warning = FALSE}
+# number of not complete cases
+sum(!complete.cases(df))
+```
+
+The majority of missing values are found in several last columns `BCL2_N`, `H3AcK18_N`, `EGR1_N`, and `H3MeK4_N`:
+```{r message=FALSE, warning = FALSE}
+colSums(is.na(df)) #['class']
+```
+
+As replacing missing values with mean values could be not bilogically relevant, it would be better for analysis toomit rows with NAs.
+
+
+### 2. BDNF_N production depending on studied classes
+
+
+Is there any diffirence in BDNF_N production between classes of epxeriment?
+
+#### 2.1. Data preparation
+
+First, we need to transform data a little making `class` variable as a factor:
+```{r message=FALSE, warning = FALSE}
+df$class <- factor(df$class)
+```
+
+No NAs for `class` column:
+```{r message=FALSE, warning = FALSE}
+colSums(is.na(df))['class']
+```
+
+However, some values of `BDNF` are missing:
+```{r message=FALSE, warning = FALSE}
+colSums(is.na(df))['BDNF_N']
+```
+
+If we omit rows where a value of BDNF_N is missing, we would have unbalanced data:
+```{r message=FALSE, warning = FALSE}
+table(df[!(is.na(df$BDNF_N)),]$class)
+```
+
+
+Let us visualize the data:
+```{r message=FALSE, warning = FALSE}
+df_BDNF <- df[!(is.na(df$BDNF_N)),]
+ggplot(df_BDNF, aes(class, BDNF_N, color = class)) + 
+  stat_summary(fun.data = "mean_cl_normal") + 
+  ggtitle(label = "BDNF protein production depending on class of mice in the experiment") +
+  xlab("Class of mice in the experiment") +
+  ylab("Expression level of BDNF \nmeasured in the nuclear fraction") + theme(plot.title = element_text(hjust = 0.5)) +
+  theme_bw()
+```
+
+We could notice that c-SC-s mice have the lowest level of BDNF, significantly differ from other classes; c-CS mice dispite of their treatment have similar levels of BDNF which is significantly higher than in other studied groups.
+
+
+#### 2.2. Build a simple linear model 
+
+First, construct a linear model. For this, we would try not to standartize the data as all variables were meausured in the same units: 
+```{r message=FALSE, warning = FALSE}
+mod_BDNF<- lm(BDNF_N ~ class, data = df_BDNF)
+summary(mod_BDNF)
+```
+
+As a baseline c-CS-m class was used. According to t-test results, the difference between the mean values in the groups and the mean at the baseline level is significant except for the class c-SC-m.
+
+#### 2.3. One-way ANOVA
+
+Then, perfrom one-way ANOVA:
+```{r message=FALSE, warning = FALSE}
+BDNF_anova <- Anova(mod_BDNF)
+BDNF_anova
+```
+
+Level of BDNF production significantly depends on class of mice (F =`r round(BDNF_anova[[3]][1],2)` , p-value = `r format(BDNF_anova[[4]][1], digits=3, scientific=TRUE)`, df:  `r BDNF_anova[[2]][1]` and `r BDNF_anova[[2]][2]`).
+
+#### 2.4. Model validation
+
+##### 2.4.1. Get data on residual:
+```{r message=FALSE, warning = FALSE}
+# Get residual
+mod_diag <- fortify(mod_BDNF)
+```
+
+##### 2.4.2. Cook\'s Distance
+No influential observations are found:
+
+```{r message=FALSE, warning = FALSE}
+ggplot(mod_diag, 
+       aes(x = 1:nrow(mod_diag), 
+           y = .cooksd)) + 
+  geom_bar(stat = "identity") + 
+  geom_hline(yintercept = 2, color = "red") +
+  xlab(label = "Index (observation number)") + 
+  ylab(label = "Cook\'s Distance") +
+  labs(title = "Cook\'s Distance plot") + 
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme_bw()
+```
+
+
+##### 2.4.3. The QQ-plot
+
+Quantile-comparison plot for standardized residuals (QQ-plot) appears almost as a straight line although the end of the plot start to deviate; thus we may suggest the normal distribution of the residuals:
+
+```{r message=FALSE, warning = FALSE}
+qqPlot(mod_diag$.stdresid,
+       xlab = 'Theoretical quantiles of a normal distribution',
+       ylab = 'Standardized residuals', 
+       main = 'Quantile-comparison plot for standardised residuals') + theme(plot.title = element_text(hjust = 0.5)) + theme_bw()
+```
+
+
+##### 2.4.4. Standardized residuals plot
+
+The mean residual value for every fitted value region is close to 0 which could put towards linearity of relationship between dependent variable and predictor.The spread of residuals is approximately the same however  some assymmetry is observed. We may suggest somewhat homoskedasticity. 
+
+```{r message=FALSE, warning = FALSE}
+ggplot(mod_diag, aes(x = class, y = .stdresid)) + 
+  geom_boxplot() + 
+  ylab(label = "Standardized residuals") +
+  xlab(label = "Class of mice in the experiment") +
+  ggtitle("Standardized residuals plot") +
+  theme(plot.title = element_text(hjust = 0.5)) + theme_bw()
+```
+
+
+
+#### 2.5. Post-hoc test
+
+
+```{r message=FALSE, warning = FALSE}
+
+post_hoch <- glht(mod_BDNF, linfct = mcp(class = 'Tukey'))
+result<-summary(post_hoch)
+result
+```
+
+At 1 % significance level, multiple comparisons of means using Tukey\'s test (df = `r result$df`) revealed difference between 13 out of which only the following pairs might be biologically relevant: 
+
+
+* c-SC-s - c-CS-s (Effects of CFC training in saline-injected controls, normal learning, NL)
+
+* t-CS-m - c-CS-s (Differences in final profiles between rescued and normal learning in the Ts65Dn mice and control mice, repsectively - how well or not rescued learning in the Ts65Dn mice resembles normal learning in the control mice; endpoint rescued vs. normal, RL-NL)
+
+* c-SC-s - c-SC-m (Effects of memantine on control baseline - changes caused by memantine treatment alone; Initial conditions control, B-cm)
+
+
+At 1 % significance level, response of BDNF protein level measured in the nuclear fraction is associated with changes caused by either normal learning (p_value = `r format(result$test$pvalues[9], digits=3, scientific=TRUE)`) or memantine treatment alone (`r format(result$test$pvalues[10], digits=3, scientific=TRUE)`) in the control mice. Also response of BDNF protein could depend on how well rescued learning in the Ts65Dn mice resembles normal learning in the control mice (`r format(result$test$pvalues[14], digits=3, scientific=TRUE)`). 
+
+
+#### 2.6. Visualization of Post-hoc results
+
+```{r message=FALSE, warning = FALSE}
+BDNF_Data <- data.frame(class = factor(levels(df_BDNF$class),
+                        levels = levels(df_BDNF$class)))
+BDNF_Data <- data.frame(BDNF_Data,
+  predict(mod_BDNF, newdata = BDNF_Data, interval = "confidence")
+)
+
+gg_bars <- ggplot(data = BDNF_Data, aes(x = class, y = fit)) +
+  geom_bar(stat = "identity", aes(fill = class), width = 0.5) +
+  geom_errorbar(aes(ymin = lwr, ymax = upr), width = 0.1)
+
+gg_bars + 
+  ggtitle(label = "BDNF protein production \ndepending on class of mice in the experiment") +
+  xlab("Class of mice in the experiment") +
+  ylab("Expression level of BDNF \nmeasured in the nuclear fraction") +
+  theme(plot.title = element_text(hjust = 0.5)) + theme_bw()
+```
+
+
+### 3. Build a linear model where ERBB4_N production depends on  the data on other proteins. 
+
+
+Data on proteins (protein expression level) consists of `r dim(df %>% dplyr::select(-MouseID, -(Genotype:class)))[2]` including `ERBB4_N`. 
+
+#### 3.1. Building a full linear model w/o interactions
+
+Data preparation: delete rows containing missing values and select all columns with protein production level; no standartization is needed as data was measured at the same scale.
+
+```{r message=FALSE, warning = FALSE}
+df_selected <- df %>% dplyr::select(-MouseID, -(Genotype:class)) %>% na.omit(.)
+```
+
+`df_selected` consists of `r dim(df_selected)[1]` observations and production level for `r dim(df_selected)[2]` proteins, including ERBB4_N.
+
+Now, construct a full linear model w/o interactions:
+```{r message=FALSE, warning = FALSE}
+mod1 <- lm(ERBB4_N ~ . , data = df_selected )
+summary(mod1)
+```
+
+At 5 % significance level there is an association in expression level with `ERBB4_N` only for several proteins. Remarkably, that for `pS6_N`  NA was defined as coefficient in regression model probably because expression level of `pS6_N` itself depends on other protein linearly. We would drop this variable from the analysis.
+
+```{r message=FALSE, warning = FALSE}
+df_selected2 <- df_selected %>% dplyr::select(-pS6_N)
+mod1 <- lm(ERBB4_N ~ . , data = df_selected2 )
+summary(mod1)
+```
+
+
+
+#### 3.2. Linear regression diagnostics - model validation
+
+Now we would validate assumptions made by linear mode. First, we check for absence in multicollinearity of predictors, calculating the variance inflation factor (VIF). Second, analyze residuals and search for some suspecious patterns (if any) to validate linear relation between dependent variable and parameters, homoscedasticity of errors, independence of observations and noraml distribution of residuals.
+
+##### 3.2.1. Multicollinearity check
+
+Calculate variance inflation factor (VIF). If VIF > 2, then remove respective presdictor and update the model:
+
+```{r message=FALSE, warning = FALSE}
+# Create a function that calculate VIF 
+# If VIF > 2, it would remove respective presdictor and update the model
+# returns updated modelthat passed multicollinearity check
+validate_vif <-  function(mod_1){
+  mod_N <-  mod_1
+  while (any(vif(mod_N)>2)){
+    var_failed <- names(which.max(vif(mod_N)))
+    mod_N <- update(mod_N, paste0(".~. - ", var_failed))
+  }
+  return(mod_N)
+}
+
+modN <- validate_vif(mod1)
+```
+
+
+Check VIF for the final model `modN`:
+```{r message=FALSE, warning = FALSE}
+vif(modN)
+```
+
+Every variable has VIF < 2, everything is OK. 
+
+```{r message=FALSE, warning = FALSE}
+summary(modN)
+```
+
+After multicollinearity analysis, the model is:
+
+`ERBB4_N` = `r round(coefficients(modN)[[1]],4)` + 
+`r format(coefficients(modN)[[2]],digits=4, scientific=TRUE)` * `pCAMKII_N` + 
+`r round(coefficients(modN)[[3]],4)` * `pELK_N` +
+`r round(coefficients(modN)[[4]],4)` * `RSK_N` + 
+`r round(coefficients(modN)[[5]],4)` * `SOD1_N` +
+(`r round(coefficients(modN)[[6]],4)`) * `DSCR1_N` +
+(`r round(coefficients(modN)[[7]],4)`) * `pP70S6_N` +
+`r round(coefficients(modN)[[8]],4)` * `CDK5_N` +
+`r round(coefficients(modN)[[9]],4)` * `ADARB1_N` +
+(`r round(coefficients(modN)[[10]],4)`) * `RRP1_N` +
+(`r round(coefficients(modN)[[11]],4)`) * `GFAP_N`  +
+`r round(coefficients(modN)[[12]],4)` * `pCASP9_N`  +
+`r round(coefficients(modN)[[13]],4)` * `SNCA_N` +
+`r round(coefficients(modN)[[14]],4)` * `SHH_N` + 
+`r round(coefficients(modN)[[15]],4)` * `H3AcK18_N` 
+
+However, according to the results of t-test (df = 537), at 5% significance level, level of `ERBB4_N` production does not depend on expression of `RRP1_N` and `DSCR1_N` and `pELK_N`. 
+
+
+##### 3.2.2.  Analysis of residuals
+
+Get data on residuals:
+```{r message=FALSE, warning = FALSE}
+
+modN_diag <- fortify(modN) 
+head(modN_diag)
+```
+
+
+**Cook\'s Distance plot**
+
+No influential observations are found:
+```{r message=FALSE, warning = FALSE}
+ggplot(modN_diag, 
+       aes(x = 1:nrow(modN_diag), 
+           y = .cooksd)) + 
+  geom_bar(stat = "identity") + 
+  geom_hline(yintercept = 2, color = "red") +
+  xlab(label = "Index (observation number)") + 
+  ylab(label = "Cook\'s Distance") +
+  labs(title = "Cook\'s Distance plot")+
+  theme(plot.title = element_text(hjust = 0.5)) + theme_bw()
+```
+
+**Standardized residuals vs Fitted values plot**
+
+```{r message=FALSE, warning = FALSE}
+gg_resid <- ggplot(data = modN_diag, 
+                   aes(x = .fitted, 
+                       y = .stdresid)) + 
+  geom_point() + 
+  geom_hline(yintercept = 0) +
+  geom_smooth(method = "lm") +
+  geom_hline(yintercept = 2, color = "red") +
+  geom_hline(yintercept = -2, color = "red")
+gg_resid + 
+  xlab(label = "Fitted values") + 
+  ylab(label = "Standardized residuals") +
+  labs(title = 'Standardized residuals vs Fitted values plot') +
+  theme(plot.title = element_text(hjust = 0.5)) + theme_bw()
+```
+
+Part of points are located out of the 2 standard deviations interval sugesting outliers that were not removed from the data. Still, the majority of observations is within 2 standard deviations interval.
+The mean residual value for every fitted value region is close to 0 which could put towards linearity of relationship between dependent variable and predictors. The spread of residuals is approximately the same across the x-axis but at the edge there is an assymmetry. We may suggest somewhat homoskedasticity.
+
+
+**Quantile-comparison plot for standardized residuals**
+
+```{r message=FALSE, warning = FALSE}
+qqPlot(modN_diag$.stdresid,
+       xlab = 'Theoretical quantiles of a normal distribution',
+       ylab = 'Standardized residuals', 
+       main = 'Quantile-comparison plot for standardised residuals')
+
+```
+
+The QQ-plot appears almost as a straight line although the end of the plot start to deviate a little. We may suggest the normal distribution of the residuals.
+
+
+
+
+#### 3.3. Model optimiztion - backward selection
+
+s we aimed to identify patterns/dependencies between `ERBB4_N` and different predictors and interprete the model, we should try to optimize the model: keep only the most contributive predictiors. Moreover, overfitted model with a lot of parameters could start to predict the noise, might be work with different data and it is sometimes too hard to interprete. We can check the significance of predictors using the partial F-test for comparison model with all variables and a model without one of variable. We will follow backward selection approach: start with all predictors in the model, iteratively remove the least contributive predictors, and stops whith a model where all predictors are statistically significant.
+
+```{r message=FALSE, warning = FALSE}
+drop1(modN, test = "F") #  remove RRP1_N as one of the least contributive predictors
+```
+
+```{r message=FALSE, warning = FALSE}
+modN2 <- update(modN, .~. - RRP1_N) # removed RRP1_N
+drop1(modN2, test = "F") #  pELK_N is one of the least contributive predictors
+```
+
+```{r message=FALSE, warning = FALSE}
+modN3 <- update(modN2, .~. - pELK_N) # removed pELK_N
+drop1(modN3, test = "F") # DSCR1_N is one of the least contributive predictors
+```
+
+```{r message=FALSE, warning = FALSE}
+modN4 <- update(modN3, .~. - DSCR1_N) # removed DSCR1_N
+drop1(modN4, test = "F") # pCAMKII_N is the least contributive predictors
+```
+
+```{r message=FALSE, warning = FALSE}
+modN5 <- update(modN4, .~. - pCAMKII_N) # removed pCAMKII_N
+drop1(modN5, test = "F") # pP70S6_N is the least contributive predictors
+```
+
+```{r message=FALSE, warning = FALSE}
+modN6 <- update(modN5, .~. - pP70S6_N) # removed pP70S6_N
+drop1(modN6, test = "F") 
+```
+
+Now all predictors are statistically significant.
+
+```{r message=FALSE, warning = FALSE}
+summary(modN6) 
+```
+
+The most contributive predictor is  `GFAP` : for every increase in the `GFAP` protein production, the the level of `ERBB4_N` goes down by `r round(coefficients(modN6)[['GFAP_N']], 3)` units. 
+
+
+#### 3.4. Model diagnostocs after optimization
+
+##### 3.4.1. Multicollinearity check
+
+For each variable VIF is < 2, multicollinearity check is passed:
+```{r message=FALSE, warning = FALSE}
+vif(modN6)
+```
+
+##### 3.4.2. Analysis of residuals
+
+Get data on residuals:
+```{r message=FALSE, warning = FALSE}
+modN6_diag <- fortify(modN6)
+```
+
+
+**Cook\'s Distance plot**
+
+No influential observations are found:
+```{r message=FALSE, warning = FALSE}
+ggplot(modN6_diag, 
+       aes(x = 1:nrow(modN6_diag), 
+           y = .cooksd)) + 
+  geom_bar(stat = "identity") + 
+  geom_hline(yintercept = 2, color = "red") +
+  xlab(label = "Index (observation number)") + 
+  ylab(label = "Cook\'s Distance") +
+  labs(title = "Cook\'s Distance plot") +
+  theme(plot.title = element_text(hjust = 0.5)) + theme_bw()
+```
+
+
+**Standardized residuals vs Fitted values plot**
+
+We obtained a plot similar to described above (see 3.2):
+```{r message=FALSE, warning = FALSE}
+gg_resid <- ggplot(data = modN6_diag, 
+                   aes(x = .fitted, 
+                       y = .stdresid)) + 
+  geom_point() + 
+  geom_hline(yintercept = 0) +
+  geom_smooth(method = "lm") +
+  geom_hline(yintercept = 2, color = "red") +
+  geom_hline(yintercept = -2, color = "red")
+gg_resid + 
+  xlab(label = "Fitted values") + 
+  ylab(label = "Standardized residuals") +
+  labs(title = 'Standardized residuals vs Fitted values plot') +
+  theme(plot.title = element_text(hjust = 0.5)) + theme_bw()
+```
+
+**Quantile-comparison plot for standardized residuals**
+
+We obtained a plot similar to described above (see 3.2):
+
+```{r message=FALSE, warning = FALSE}
+qqPlot(modN6_diag$.stdresid,
+       xlab = 'Theoretical quantiles of a normal distribution',
+       ylab = 'Standardized residuals', 
+       main = 'Quantile-comparison plot for standardised residuals')
+```
+
+#### 3.5. Prediction
+For prediction, we will use the modN6. First we should construct test dataframe where the most contibutive predictor `GFAP_N` changes from its minimal to maximal value while other predictors are fixed to mean value. 
+
+```{r}
+# Construct new dataframe:
+new_data <-df_selected2 %>% 
+  do(data.frame(GFAP_N = seq(min(.$GFAP_N), max(.$GFAP_N), length.out = 100),
+              RSK_N = mean(.$RSK_N),
+              SOD1_N = mean(.$SOD1_N),
+              CDK5_N = mean(.$CDK5_N),
+              ADARB1_N = mean(.$ADARB1_N),
+              pCASP9_N = mean(.$pCASP9_N),
+              SNCA_N = mean(.$SNCA_N),
+              SHH_N = mean(.$SHH_N),
+              H3AcK18_N = mean(.$H3AcK18_N)))
+
+# Calculate and add predictions:
+Predictions <- predict(modN6, 
+                       newdata = new_data,
+                       interval = 'confidence')
+
+
+
+new_data <- data.frame(new_data, Predictions)
+
+
+# Create regression line with the prediction intervals:
+Pl_predict <- ggplot(new_data, 
+                     aes(x = GFAP_N, y = fit)) +
+  geom_ribbon(alpha = 0.2, 
+              aes(ymin = lwr, ymax = upr), color = 'blue') +
+  geom_point(data = df_selected2, 
+             aes(x = GFAP_N, y = ERBB4_N), color = 'darkgreen') +
+  ggtitle("Prediciton based on the multiple linear model with initial data points") +
+  ylab(label = 'Fitted value of ERBB4 protein production \nmeasured in the nuclear fraction') +
+  xlab(label = 'GFAP protein production \nmeasured in the nuclear fraction')
+Pl_predict
+```
+
+
+The final model is:
+
+`ERBB4_N` = `r round(coefficients(modN6)[[1]],4)` + 
+`r round(coefficients(modN6)[[2]],4)` *  `RSK_N` + 
+`r round(coefficients(modN6)[[3]],4)` * `SOD1_N` +
+`r round(coefficients(modN6)[[4]],4)` * `CDK5_N` + 
+`r round(coefficients(modN6)[[5]],4)` *  `ADARB1_N` +
+(`r round(coefficients(modN6)[[6]],4)`) *  `GFAP_N` +
+`r round(coefficients(modN6)[[7]],4)` * `pCASP9_N` +
+`r round(coefficients(modN6)[[8]],4)` * `SNCA_N` +
+`r round(coefficients(modN6)[[9]],4)` * `SHH_N` +
+`r round(coefficients(modN6)[[10]],4)` * `H3AcK18_N`
+
+
+
+`GFAP_N` is the most contributive presictor. This result is somewhat consistent with the fact that `GFAP` is a cell-specific marker that at the development of the central nervous system distinguishes astrocytes from other glial cells and is a part of nuclear signaling by ERBB4 and is a part of nuclear signaling by ERBB4. 
+
+
+We coud construct some linear model rudely estimating how `ERBB4_N` might depend on production level of other proteins used in the study. The model could be interpreted biologically however it is too simplified, does not consider interactions between pathways where studied proteins are involved and does not take into account design of the experiment. Too many variables and possible (in)direct interactions are present and could not be fully represented as linear model. Some interestig and important connections between protein level resposes might be lost during the model optimizaton.  
+Thus, we should apply some other methods to analyze production levels of proteins such an experiment. 
+
+
+### 4. PCA analysis
+
+#### 4.1. Ordination
+
+We would remov rows with missing values as we mentioned above.  
+Run redundancy analysis on data with omitted missing values without predictors (`Genotype`, `Behavior`, `Treatment` and `class`), scaling the variables to zero mean and unit standard deviation:
+
+```{r message=FALSE, warning = FALSE}
+mice_pca <- rda(df_selected, scale = TRUE)
+sum_mice_pca <- summary(mice_pca)
+
+```
+
+#### 4.2. Plot the PCA
+
+##### 4.2.1. Correlation Biplot
+
+
+```{r message=FALSE, warning = FALSE}
+biplot(mice_pca, 
+       scaling = "species", 
+       display = "species", main = 'Correlation biplot',
+       xlab = 'Principal Component 1',
+       ylab = 'Principal Component 2')
+```
+
+
+
+Accroding to the plot, as PC1 increases, the expression level for a part of studied proteins (e.g. `MEK`, `TRKA`,  `NR11`, `ERK`) decreases while for a few increases as well (e.g., `pCFOS`, `EGR1`, `BAD`).
+With increasing PC2, production of a part of proteins increases (e.g., `SNCA`, `SOD1`) while for other proteins (e.g, `GSK3B`, `CDK5`) it drops.
+
+
+
+##### 4.2.2. Distance Biplot
+
+
+```{r message=FALSE, warning = FALSE}
+df_scores <- data.frame(na.omit(df),
+                        scores(mice_pca, 
+                               display = "sites", 
+                               choices = c(1, 2, 3), 
+                               scaling = "sites"))
+
+p_scores <- ggplot(df_scores, aes(x = PC1, y = PC2)) + 
+  geom_point(aes( color = class), alpha = 0.5) +
+  coord_equal(xlim = c(-1.2, 1.2), ylim = c(-1.2, 1.2)) + 
+  ggtitle(label = "Distance biplot") + 
+  ylab("Principal Component 2") +
+  xlab("Principal Component 1") +
+  theme_bw()
+p_scores + theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+Classes are quite similar to each other, although along PC2 we could distinguish control samples from mutant ar some extent.  
+
+
+#### 4.3. Interpretation of PCA
+
+Get eigenvalues - they explain the variance of the data along the new feature (proncipal component) axes:
+```{r message=FALSE, warning = FALSE}
+eigenvals(mice_pca)
+```
+
+ 
+The higest eigenvalues are about `r round(eigenvals(mice_pca)[[1]],2)`  and `r round(eigenvals(mice_pca)[[2]],2)`. Their magnitudes indicates how much of the data\'s variability is explained by their eigenvectors (which corresponds to PC1 and PC2, respectively). The first and second eigenvalues represent amount of variance accounted for by the first and second principal components.
+
+
+Expected values under the broken-stick distribution are the following:
+```{r message=FALSE, warning = FALSE}
+bstick(mice_pca)
+```
+
+Null hypothesis: eigenvalues follow the broken-stick distribution. 
+Principal components should be retained if observed eigenvalues are higher than respective random broken stick components.
+Draw a line plot of the eigenvalues of PCA (scree plot) for visualizing which principle components have eigenvalues greater than those expected under the null model:
+```{r message=FALSE, warning = FALSE}
+screeplot(mice_pca, 
+          type = "lines", 
+          bstick = TRUE,
+          main = "Scree plot of the eigenvalues obtained from a PCA")
+```
+
+Accoding to the scree plot, we could keep the following principal components: PC1, PC2, PC3 and PC4.
+
+```{r message=FALSE, warning = FALSE}
+
+plot_data <- as.data.frame(sum_mice_pca$cont$importance['Proportion Explained',])
+plot_data$component <- sub("PC*", "", rownames(plot_data))
+
+p <- ggplot(plot_data, aes( x = as.factor(as.numeric(component)), 
+                       y = plot_data[,1])) + 
+  geom_bar(stat = "identity", fill = "darkorange", color = 'black') + 
+  ylab('Proportion Explained') +
+  xlab('Principal Component Number') +
+  ggtitle('Proportion of Total Variance Explained by Principal Componants') +
+  theme_bw()
+
+p + theme(axis.text.x = element_text(angle = 90, 
+                                     hjust = 1, 
+                                     size = 7),
+          plot.title = element_text(hjust = 0.5)) 
+```
+
+
+About 30 % of a total variance of the data is explained by the first PC. THe most contributive principal components are PC1, PC2, PC3, PC4 as they account for about `r round(sum_mice_pca$cont$importance[,4][[3]],4)*100` % of total variance. 
+
+
+Extract the species scores (loadings) for the PC1, PC2, and PC3:
+```{r message=FALSE, warning = FALSE}
+# with unscaled raw scores (scaling = 0; to get scores scaled by eigenvalues, set scaling = 2):
+scores(mice_pca, display = "species", 
+       choices = c(1,2,3), scaling = 0)
+```
+
+The majority of coefficients for PC1, PC2, and PC3 are negative meaning that as the respective PC increases, the expression level of a respective protein decreases.
+
+
+Get summary om pca with scaling = 0:
+```{r message=FALSE, warning = FALSE}
+mice_pca_scaled0 <- summary(mice_pca, scaling = 0)
+```
+
+Let's consider PC1 and PC2 as they explain the highest proportion of a total variance of the data.
+Top 5 proteins which production levels contribute with the highest positive value to PC1: 
+```{r message=FALSE, warning = FALSE}
+mice_pca_scaled0$species[,1][order(mice_pca_scaled0$species[,1], decreasing=TRUE)][1:5]
+```
+
+Production level of these proteins increases as PC1 increases
+
+Top 5 proteins which production levels contribute with the most negative value to PC1:
+```{r message=FALSE, warning = FALSE}
+mice_pca_scaled0$species[,1][order(mice_pca_scaled0$species[,1], decreasing=FALSE)][1:5]
+```
+The higher PC1, the lower epression of these proteins becomes.
+
+
+Similarly for PC2:
+Top 5 proteins which production levels contribute with the highest positive value to PC2:
+```{r message=FALSE, warning = FALSE}
+mice_pca_scaled0$species[,2][order(mice_pca_scaled0$species[,2], decreasing=TRUE)][1:5]
+```
+
+Top 5 proteins which production levels contribute with the most negative value to PC2:
+```{r message=FALSE, warning = FALSE}
+mice_pca_scaled0$species[,2][order(mice_pca_scaled0$species[,2], decreasing=FALSE)][1:5]
+```
+
+Thus, due to PCA we significantly reduced the number of variables for the analysis.
+
+#### 4.4. 3-Dimensional PCA plot
+
+```{r message=FALSE, warning = FALSE}
+library(plotly)
+
+fig <- plot_ly(df_scores,x = ~PC1, y = ~PC2, z = ~PC3, color = ~class)
+fig <- fig %>% add_markers()
+fig <- fig %>% layout(title = '3-Dimensional PCA plot',
+                      scene = list(xaxis = list(title = 'PC1'),
+                     yaxis = list(title = 'PC2'),
+                     zaxis = list(title = 'PC3')))
+fig
+```
+
+
+After addition of the third component, PC3, we could much better distiniguish classes (in pairwise manner, for example).  
+
+
+
+
+
+
+### 5. Differential gene expression analysis
+
+
+Using `DESeq2`package, we would try to estimte which genes are differentially expressed in Ts65Dn mice in rescued learning compared with those in normal learning in control mice. It would give a hint on molecular mechanisms underlying possible effect of rescued learning. For this purpose, we would compare t-CS-s and c-CS-s classes, considering each mice as a bilogical replicate and 15 measurements per sample for each protein as technical replicates.  
+
+We start with creating so-called count matrix - matrix containing productiln protein levels using customed function: 
+```{r message=FALSE, warning = FALSE}
+# Function works secifically with our initial data used in the study
+
+create_countMatrix <- function(df_in, class1, class2){
+  # Remove rows with missing values from initial data
+  # Select only data on protein levels for class1 and transpose dataframe:
+  df_count <- t(na.omit(df_in) %>% filter(., class == class1) %>% select(-(Genotype:Behavior)))
+  colnames(df_count) <- df_count[1, ]
+  df_count <- df_count[-1, ]
+  
+  # Select only data on protein levels for class2 and transpose dataframe:
+  df_to_cbind <- t(na.omit(df) %>% filter(., class == class2) %>% select(-(Genotype:Behavior)))
+  colnames(df_to_cbind) <- df_to_cbind[1, ]
+  df_to_cbind <- df_to_cbind[-1, ]
+  
+  # Bind data by columns
+  df_count <- cbind(df_count, df_to_cbind)
+  
+  # Save condition data
+  df_count <- df_count[-nrow(df_count), ]
+  return(data.matrix(as.data.frame(df_count)))
+}
+
+df_count <- create_countMatrix(df, 't-CS-m', 'c-CS-s')
+```
+
+
+Create `coldata` on conditions and samples accroding to `df_count`:
+```{r message=FALSE, warning = FALSE}
+# Function works secifically wit our initial data used in the study
+
+create_colData <- function(df_in, df_count_in, class1, class2){
+  condition_classes <- unname(rbind(na.omit(df_in) %>% filter(., class == class1) %>% select(class), na.omit(df_in) %>% filter(., class == class2) %>% select(class)))
+  coldata_out<-data.frame(row.names = colnames(df_count_in),
+           condition = condition_classes)
+  return(coldata_out)
+}
+
+
+coldata <- create_colData(df, df_count,'t-CS-m', 'c-CS-s' )
+head(coldata)
+```
+
+
+Create DESeqDataSet object:
+```{r message=FALSE, warning = FALSE}
+dds <- DESeqDataSetFromMatrix(countData = df_count,
+                              colData=coldata,
+                              design = ~ condition)
+```
+
+
+Collapse technical replicates in a DESeqDataSet:
+```{r message=FALSE, warning = FALSE}
+dds$sample <- factor(colnames(df_count))
+dds$run <- rep(unique(sub("_.*", "", colnames(df_count))),
+                                  each = 15)
+ddsColl <- collapseReplicates(dds, dds$sample, 
+                              dds$run)
+```
+
+
+Differential gene expression analysis 
+```{r message=FALSE, warning = FALSE}
+ddsColl <- DESeq(ddsColl)
+res <- results(ddsColl, contrast = c("condition",'t-CS-m','c-CS-s'))
+```
+
+
+Select proteins which production significantly differ in t-CS-m mice compared to c-CS-s (c-CS-s would be used as 'control'); fwe would filter data based on p-value adjusted < 0.05; after that, sort proteins by log2-fold-change estimate:
+```{r message=FALSE, warning = FALSE}
+res_Sig <-  res[res$padj < 0.05 & !is.na(res$padj), ]
+res_Sig <-  res_Sig[order(res_Sig$log2FoldChange), ]
+```
+
+10 top proteins which production decreased in mutant mice with rescued learning compared with control mice with normal learning:
+```{r message=FALSE, warning = FALSE}
+head(res_Sig[, c(2,5)], 10)
+```
+
+
+10 top proteins which production is higher in mutant mice with rescued learning compared with control mice with normal learning:
+```{r message=FALSE, warning = FALSE}
+tail(res_Sig[, c(2,5)], 10)
+```
+
+
+
+At 5 % significance level, production level differ for the follwoing proteins:
+```{r message=FALSE, warning = FALSE}
+rownames(res_Sig)
+```
+
+These proteins might be associated with differences at gene expression level between  trisomy mice in rescued learning with control mice with normal learning.
+
+We could compare this list of proteins with the list of proteins associated with effects of memantine on genotype differences (Initial conditions comparison: t-SC-mem vs. c-SC-sal)
+
+
+```{r message=FALSE, warning = FALSE}
+df_count <- create_countMatrix(df, 't-SC-m', 'c-SC-s')
+
+# Create `coldata` on conditions and samples accroding to `df_count`:
+coldata <- create_colData(df, df_count,'t-SC-m', 'c-SC-s' )
+
+# Create DESeqDataSet object:
+dds <- DESeqDataSetFromMatrix(countData = df_count,
+                              colData=coldata,
+                              design = ~ condition)
+
+# Collapse technical replicates in a DESeqDataSet:
+
+dds$sample <- factor(colnames(df_count))
+dds$run <- rep(unique(sub("_.*", "", colnames(df_count))),
+                                  each = 15)
+ddsColl <- collapseReplicates(dds, dds$sample, 
+                              dds$run)
+
+#Differential gene expression analysis 
+ddsColl_initial <- DESeq(ddsColl)
+res_initial <- results(ddsColl_initial, 
+                       contrast = c("condition",'t-SC-m','c-SC-s'))
+
+
+# Get significant results
+res_initial_Sig <-  res_initial[res_initial$padj < 0.05 & !is.na(res_initial$padj), ]
+res_initial_Sig <-  res_initial_Sig[order(res_initial_Sig$log2FoldChange), ]
+```
+
+
+Get names of differntialy expressed genes probaby associated with effect of memantine on genotype differences:
+```{r message=FALSE, warning = FALSE}
+rownames(res_initial_Sig)
+```
+
+
+These proteins are present in both comparisons; they probably account for changes in rescued lerning among mutants compared with control mice in normal learning as well as for the effect of memantine on genotype differences:
+```{r message=FALSE, warning = FALSE}
+intersect(rownames(res_initial_Sig),rownames(res_Sig))
+```
+
+This type of data analysis allows us to identify proteins and metabolic/signalling pathways which could be crcial for pharmacological rescue of learning in organisms suffering from Down Disease.
+
+
