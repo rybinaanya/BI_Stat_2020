@@ -1,0 +1,247 @@
+---
+title: "Mini-project on log regression"
+author: "Anna Rybina"
+date: "05/04/2021"
+output:
+  html_document: #default
+    toc: true
+    #theme: united
+    toc_depth: 5
+    toc_float: true
+    #number_section: true
+#editor_options:
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### 0. Prerequisites: installation and import of libraries
+The current work requires the following packages (R version: 3.6.3):
+
+```{r message=FALSE, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(ggplot2)
+require(dplyr)
+require(car)
+```
+
+
+### 1. Exploratory data analysis
+
+Data consists of the following  variables: three predictor variables `gre` (Graduate Record Exam scores), `gpa` (grade point average), `rank` (prestige of the undergraduate institution), and the response variable `admit` (admission into graduate school: admit/don\'t admit).
+
+Take a look at the structure of the data:
+```{r message=FALSE, warning = FALSE}
+df <- read.csv('https://stats.idre.ucla.edu/stat/data/binary.csv')
+str(df)
+```
+
+No missing values were found:
+```{r message=FALSE, warning = FALSE}
+# number of not complete cases
+sum(!complete.cases(df))
+```
+
+
+We will treat the variables `gre` and `gpa` as continuous and convert variables `admit` and `rank` into more appropriate factor type:
+```{r message=FALSE, warning = FALSE}
+df$admit <- as.factor(df$admit)
+df$rank <- as.factor(df$rank)
+str(df)
+```
+
+
+Looking at the summary, we may see that most of the students did not get admitted:
+```{r message=FALSE, warning = FALSE}
+summary(df)
+```
+
+
+Check for collineality:
+```{r message=FALSE, warning = FALSE}
+plot(df$gpa,df$gre,col="blue", xlab = 'GPA score',ylab ='GRE score', main = "Correlation scatterplot" )
+
+```
+
+We may consider `gpa` and `gre`  as not correlated which is supported by low correlation value between them:
+```{r message=FALSE, warning = FALSE}
+cor(df$gpa,df$gre)
+```
+
+
+### 2. Build a model
+
+Construct a logistic regression model using the glm (generalized linear model) function.
+```{r message=FALSE, warning = FALSE}
+mod <- glm(admit ~ ., family = binomial(link = 'logit'), data = df)
+Anova(mod)
+```
+
+According to likelihood-ratio chisquare statistics, all predictor variables (`gre`, `gpa`, and `rank`) could significantly influence the response variable.
+
+
+
+```{r message=FALSE, warning = FALSE}
+summary(mod)
+```
+According to p-values for Wald z-statistic, `gre`, `gpa`, three levels of `rank` are statistically significant.
+
+
+Use Akaike information criterion (AIC) for estimating model:
+
+```{r message=FALSE, warning = FALSE}
+drop1(mod, test = "Chi")
+```
+
+At 5 % significance level, all predictors are significant.
+
+
+### 3. Model diagnostics
+
+To assess the linearity, we would use Pearson residuals that measure the relative deviations between the observed and fitted values:
+```{r message=FALSE, warning = FALSE}
+mod_diag <- data.frame(.fitted = fitted(mod, type = 'response'),
+                        .resid_p = resid(mod, type = 'pearson'))
+
+ggplot(mod_diag, aes(y = .resid_p, x = .fitted)) + 
+  geom_point() +
+  theme_bw() +
+  geom_hline(yintercept = 0) +  
+  geom_smooth(method = 'loess')+
+  labs(title = "Pearson residuals vs Fitted values") +
+  xlab('Fitted values') +
+  ylab('Pearson residuals')+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+```
+
+
+
+We may observe some linearity of relationship between dependent variable and predictors, however, not an ideal: the mean residual value is close to 0 but deviates at the left and right side of the plot.
+
+Testing for overdispersion:
+```{r message=FALSE, warning = FALSE}
+overdisp_fun <- function(model) {
+  rdf <- df.residual(model)  # degrees of freedom N - p
+  if (any(class(model) == 'negbin')) rdf <- rdf - 1 ## consider k in NegBin GLMM
+  rp <- residuals(model,type='pearson') # Pearson residuals
+  Pearson.chisq <- sum(rp^2) # sums of squares,following Chi-square distribution
+  prat <- Pearson.chisq/rdf  # sums of squares of residuals / degrees of freedom
+  pval <- pchisq(Pearson.chisq, df=rdf, lower.tail=FALSE) # p-value
+  c(chisq=Pearson.chisq,ratio=prat,rdf=rdf,p=pval)        # print results
+}
+
+overdisp_fun(mod)
+```
+
+We couls consider no overdispersion in the data.
+
+**Final model**:
+
+
+`admit` = `r round(mod$coefficients[[1]],2)` +  `r round(mod$coefficients[[2]],4)`\*  `gre` +  `r round(mod$coefficients[[3]],2)`\* `gpa` +  (`r round(mod$coefficients[[4]],2)`)\* `rank2` +  (`r round(mod$coefficients[[5]],2)`)\* `rank3` + (`r round(mod$coefficients[[6]],2)`)\* `rank4`
+
+where:
+
+`r round(mod$coefficients[[1]],2)` is log odds of admission (versus non-admission) for baseline level of `rank` factor (rank 1).
+
+
+For every one unit change in `gre`, the log odds of admission (versus non-admission) increases by `r round(mod$coefficients[[2]],4)`. 
+
+With incresing GPA by one unit, the log odds of being admitted increases by `r round(mod$coefficients[[3]],2)`.
+
+In other words, with increasing GPA or GRE by one unit, chances to get admitted increase by `r round(exp(mod$coefficients[[2]]),4)`  or by `r round(exp(mod$coefficients[[3]]),2)` times, respectively.
+
+For `rank3`: if  an attended institutions was of the `rank3`, then relative to/versus the institution of the `rank1` log odds for admission changes by `r round(mod$coefficients[[5]],2)`. Similarly, for coefficients before `rank2` and `rank4`.  
+Chances to be admitted to graduate schools is `r round(exp(round(mod$coefficients[[4]],2)),2)` times lowe if a student is undegraduate from institution of `rank2` than of `rank1`. If the institution was of `rank3` and `rank4`, chances to get admitted differ from `rank1` instutions  `r round(exp(round(mod$coefficients[[5]],2)),2)` and `r round(exp(round(mod$coefficients[[6]],2)),2)` times, respectively. Simply saying, the lower rank of the institution (higher the prestige is), the more chances a sudent have to get admitted to graduate school.  
+
+
+
+
+### 3. Prediction
+To predict how `GRE` affects the chances to get admitted, let's construct a dataset where there will be 100 observations per different rank, `gpa` is fixed to its mean value while `gre` varies from its minimum to maximum value:
+```{r message=FALSE, warning = FALSE}
+new_data <- df %>% group_by(rank) %>%
+  do(data.frame(gre = seq(from = min(.$gre), to = max(.$gre), length.out = 100),
+                gpa = mean(.$gpa)))
+
+head(new_data)
+```
+
+
+
+Prediction using model matrix:
+```{r message=FALSE, warning = FALSE}
+
+X <- model.matrix(~ rank + gpa + gre, data =  new_data)
+b <- coef(mod)
+
+# estimating on the link scale
+new_data$fit_eta <- X %*% b
+new_data$se_eta <- sqrt(diag(X %*% vcov(mod) %*% t(X)))
+
+
+logit_back <- function(x) exp(x)/(1 + exp(x)) # back transformation
+
+
+new_data$fit_pi <- logit_back(new_data$fit_eta)
+
+new_data$lwr_pi <- logit_back(new_data$fit_eta - 2 * new_data$se_eta)
+new_data$upr_pi <- logit_back(new_data$fit_eta + 2 * new_data$se_eta)
+
+head(new_data, 2)
+```
+
+Prediction plot estimated on the link scale is difficult to interprete:
+```{r message=FALSE, warning = FALSE}
+ggplot(new_data, aes(x = gre, y = fit_eta, fill = rank))  + 
+  geom_line(aes(color = rank)) +
+  geom_ribbon(aes(ymin = fit_eta - 2 * se_eta, ymax = fit_eta + 2 * se_eta), alpha = 0.5)+
+  labs(title = "Predicted logits of admission \ndepending on the rank of undergraduate institution",
+       subtitle='Estimation on the link scale') +
+  xlab('GRE score') +
+  ylab('Predicted logits \nof admitting to graduate school')+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+```
+
+
+
+There is anotehr approach: using ` plogis` function, generate the predicted probabilities and standard errors, estimating on the link scale and back transforming the predicted values and confidence intervals into probabilities: 
+```{r message=FALSE, warning = FALSE}
+new_data2 <- cbind(new_data, predict(mod, newdata = new_data, type = "link",
+    se = TRUE))
+new_data2 <- within(new_data2, {
+    PredictedProb <- plogis(fit)
+    LL <- plogis(fit - (1.96 * se.fit))
+    UL <- plogis(fit + (1.96 * se.fit))
+})
+
+
+head(new_data2)
+```
+
+Plot with the predicted probabilities and 95% confidence interval:
+```{r message=FALSE, warning = FALSE}
+ggplot(new_data2, aes(x = gre, y = PredictedProb)) + geom_ribbon(aes(ymin = LL,
+    ymax = UL, fill = rank), alpha = 0.2) + geom_line(aes(colour = rank),
+    size = 1) +
+  labs(title = "Predicted probablities of admission vs GRE score \ndepending on the rank of undergraduate institution") +
+  xlab('GRE score') +
+  ylab('Predicted probability \nof admitting to graduate school')+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+```
+
+From the last graph, we may see that the higher GRE score and the more prestigious the undergraduate institution was, the higher probability of being admitted to graduate school is.
+
+
+
+
+
